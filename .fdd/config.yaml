@@ -1,0 +1,18 @@
+version: 1
+
+# Global defaults
+defaults:
+  scope: ["src/**"]
+  exclude: ["node_modules/**", "dist/**"]
+  verify_hooks: ["bun lint", "bun test"]
+  trigger_tools: ["grep", "bun lint"]
+
+# Context limits
+limits:
+  max_pitfalls_in_context: 5
+
+# Waiver policy
+waiver:
+  require_reason: true
+
+# Note: Specific trigger rules exist only in pitfall entries (single source of truth)

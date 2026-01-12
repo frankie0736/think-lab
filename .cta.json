@@ -1,0 +1,28 @@
+{
+  "projectName": "issue-lab",
+  "mode": "file-router",
+  "typescript": true,
+  "tailwind": true,
+  "packageManager": "bun",
+  "addOnOptions": {
+    "drizzle": {
+      "database": "sqlite"
+    }
+  },
+  "git": true,
+  "version": 1,
+  "framework": "react-cra",
+  "chosenAddOns": [
+    "biome",
+    "db",
+    "drizzle",
+    "form",
+    "shadcn",
+    "t3env",
+    "start",
+    "tanstack-query",
+    "compiler",
+    "tanchat",
+    "store"
+  ]
+}
