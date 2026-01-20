@@ -7,7 +7,7 @@ import {
 	CheckCircle2,
 	Loader2,
 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useSettings } from "@/hooks/use-settings";
 
@@ -18,6 +18,43 @@ export const Route = createFileRoute("/settings")({
 interface ModelInfo {
 	id: string;
 	owned_by?: string;
+}
+
+// Cache TTL: 5 minutes
+const MODELS_CACHE_TTL = 5 * 60 * 1000;
+const MODELS_CACHE_KEY_PREFIX = "thinklab-models-cache:";
+
+interface ModelsCacheEntry {
+	models: ModelInfo[];
+	timestamp: number;
+}
+
+function getCachedModels(baseURL: string): ModelInfo[] | null {
+	try {
+		const key = MODELS_CACHE_KEY_PREFIX + baseURL;
+		const cached = localStorage.getItem(key);
+		if (!cached) {
+			return null;
+		}
+		const entry: ModelsCacheEntry = JSON.parse(cached);
+		if (Date.now() - entry.timestamp > MODELS_CACHE_TTL) {
+			localStorage.removeItem(key);
+			return null;
+		}
+		return entry.models;
+	} catch {
+		return null;
+	}
+}
+
+function setCachedModels(baseURL: string, models: ModelInfo[]): void {
+	try {
+		const key = MODELS_CACHE_KEY_PREFIX + baseURL;
+		const entry: ModelsCacheEntry = { models, timestamp: Date.now() };
+		localStorage.setItem(key, JSON.stringify(entry));
+	} catch {
+		// Ignore storage errors
+	}
 }
 
 interface ModelsState {
@@ -101,36 +138,61 @@ function SettingsPage() {
 		},
 	});
 
-	// Load models when baseURL changes (try without auth first)
-	const loadModels = useCallback(async (baseURL: string, apiKey?: string) => {
-		if (!baseURL) {
-			setModelsState({ status: "idle", models: [] });
-			return;
-		}
-
-		setModelsState({ status: "loading", models: [] });
-
-		try {
-			const modelList = await fetchModels(baseURL, apiKey);
-			setModelsState({
-				status: "loaded",
-				models: modelList.sort((a, b) => a.id.localeCompare(b.id)),
-			});
-		} catch (err) {
-			const errorMsg = err instanceof Error ? err.message : "Unknown error";
-			// Check if it's an auth error (401/403)
-			if (
-				errorMsg.includes("401") ||
-				errorMsg.includes("403") ||
-				errorMsg.toLowerCase().includes("unauthorized") ||
-				errorMsg.toLowerCase().includes("auth")
-			) {
-				setModelsState({ status: "auth-required", models: [] });
-			} else {
-				setModelsState({ status: "error", models: [], error: errorMsg });
+	// Load models with cache support
+	const loadModels = useCallback(
+		async (baseURL: string, apiKey?: string, skipCache = false) => {
+			if (!baseURL) {
+				setModelsState({ status: "idle", models: [] });
+				return;
 			}
+
+			// Check cache first (unless explicitly skipped)
+			if (!skipCache) {
+				const cached = getCachedModels(baseURL);
+				if (cached) {
+					setModelsState({
+						status: "loaded",
+						models: cached,
+					});
+					return;
+				}
+			}
+
+			setModelsState({ status: "loading", models: [] });
+
+			try {
+				const modelList = await fetchModels(baseURL, apiKey);
+				const sortedModels = modelList.sort((a, b) => a.id.localeCompare(b.id));
+				// Cache the result
+				setCachedModels(baseURL, sortedModels);
+				setModelsState({
+					status: "loaded",
+					models: sortedModels,
+				});
+			} catch (err) {
+				const errorMsg = err instanceof Error ? err.message : "Unknown error";
+				// Check if it's an auth error (401/403)
+				if (
+					errorMsg.includes("401") ||
+					errorMsg.includes("403") ||
+					errorMsg.toLowerCase().includes("unauthorized") ||
+					errorMsg.toLowerCase().includes("auth")
+				) {
+					setModelsState({ status: "auth-required", models: [] });
+				} else {
+					setModelsState({ status: "error", models: [], error: errorMsg });
+				}
+			}
+		},
+		[]
+	);
+
+	// Auto-load models on mount if baseURL exists
+	useEffect(() => {
+		if (settings.baseURL) {
+			loadModels(settings.baseURL, settings.apiKey);
 		}
-	}, []);
+	}, [settings.baseURL, settings.apiKey, loadModels]);
 
 	// Validate API key
 	const validateApiKey = useCallback(
@@ -152,9 +214,12 @@ function SettingsPage() {
 
 			try {
 				const modelList = await fetchModels(baseURL, apiKey);
+				const sortedModels = modelList.sort((a, b) => a.id.localeCompare(b.id));
+				// Cache the result
+				setCachedModels(baseURL, sortedModels);
 				setModelsState({
 					status: "loaded",
-					models: modelList.sort((a, b) => a.id.localeCompare(b.id)),
+					models: sortedModels,
 				});
 				setApiKeyValidation({ status: "valid" });
 			} catch (err) {

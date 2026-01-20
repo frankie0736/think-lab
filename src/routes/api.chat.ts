@@ -15,6 +15,7 @@ import {
 import { interviewToolDef } from "@/lib/interview-tool";
 import { createOpenAICompatChat } from "@/lib/openai-compat-adapter";
 import { INTERVIEW_SYSTEM_PROMPT } from "@/lib/prompts/interview";
+import { createWebSearchServerTool } from "@/lib/web-search-tool";
 
 // Regex to strip /v1 suffix from base URL for Anthropic adapter
 const V1_SUFFIX_REGEX = /\/v1\/?$/;
@@ -131,9 +132,16 @@ export const Route = createFileRoute("/api/chat")({
 						? { thinkingHistory }
 						: { reasoning: { effort: "medium", summary: "auto" } };
 
+					// Build tools array - conditionally add web search if API key configured
+					// biome-ignore lint/suspicious/noExplicitAny: tool types vary between client and server tools
+					const tools: any[] = [interviewToolDef];
+					if (env.TAVILY_API_KEY) {
+						tools.push(createWebSearchServerTool(env.TAVILY_API_KEY));
+					}
+
 					const stream = chat({
 						adapter,
-						tools: [interviewToolDef],
+						tools,
 						systemPrompts: [systemPrompt],
 						agentLoopStrategy: maxIterations(20),
 						messages,

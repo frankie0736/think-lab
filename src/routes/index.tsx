@@ -48,6 +48,8 @@ function ThinkingAssistant() {
 					setStreamPhase("tool-streaming");
 					break;
 				case "content":
+					// Keep current phase - AI may still generate tool calls after text
+					break;
 				case "done":
 					setStreamPhase("complete");
 					break;

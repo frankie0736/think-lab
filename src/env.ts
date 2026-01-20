@@ -10,6 +10,8 @@ export const env = createEnv({
 		OPENAI_MODEL: z.string().optional(),
 		// Set to "true" for models that don't support OpenAI Responses API (e.g., DeepSeek, Qwen)
 		USE_COMPLETIONS_API: z.string().optional(),
+		// Tavily API for web search (optional)
+		TAVILY_API_KEY: z.string().optional(),
 	},
 
 	/**
@@ -33,6 +35,7 @@ export const env = createEnv({
 		OPENAI_API_KEY: process.env.OPENAI_API_KEY,
 		OPENAI_MODEL: process.env.OPENAI_MODEL,
 		USE_COMPLETIONS_API: process.env.USE_COMPLETIONS_API,
+		TAVILY_API_KEY: process.env.TAVILY_API_KEY,
 		// Client
 		VITE_APP_TITLE: import.meta.env.VITE_APP_TITLE,
 	},

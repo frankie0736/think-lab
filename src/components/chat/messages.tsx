@@ -18,14 +18,16 @@ export function Messages({ messages, streamPhase, ctx }: MessagesProps) {
 	const hasCompleteTool = lastMessage?.parts.some(
 		(p) => p.type === "tool-call" && p.state === "input-complete"
 	);
-	const hasTextOutput = lastMessage?.parts.some(
-		(p) => p.type === "text" && p.content
+	const hasStreamingTool = lastMessage?.parts.some(
+		(p) => p.type === "tool-call" && p.state === "input-streaming"
 	);
 	const isActive =
 		streamPhase === "pending" ||
 		streamPhase === "thinking" ||
 		streamPhase === "tool-streaming";
-	const showSkeleton = isActive && !hasCompleteTool && !hasTextOutput;
+	// Show skeleton when loading and no tool is being displayed yet
+	// (message-part.tsx handles skeleton for streaming tools)
+	const showSkeleton = isActive && !hasCompleteTool && !hasStreamingTool;
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on message count change or skeleton visibility
 	useEffect(() => {
