@@ -218,6 +218,27 @@ const SYSTEM_PROMPT = `思考辅助助手。5 阶段流程帮用户想清楚一�
 `;
 
 /**
+ * 获取用于检测的模型名称
+ * 检测任务简单，使用轻量模型；同时避免 thinking 模型的特殊要求
+ */
+function getDetectionModel(mainModel: string): string {
+	// 如果是 thinking 模型，去掉 -think 后缀
+	if (mainModel.includes("-think")) {
+		return mainModel.replace("-think", "");
+	}
+	// 如果是 Claude 模型，使用 haiku 做检测（更快更便宜）
+	if (mainModel.includes("claude")) {
+		return "claude-3-5-haiku-latest";
+	}
+	// 如果是 GPT 模型，使用 gpt-4o-mini 做检测
+	if (mainModel.includes("gpt")) {
+		return "gpt-4o-mini";
+	}
+	// 其他情况使用原模型
+	return mainModel;
+}
+
+/**
  * 调用 LLM 进行 patch 检测（非流式）
  */
 async function detectPatches(
@@ -226,6 +247,8 @@ async function detectPatches(
 	baseURL: string,
 	model: string
 ): Promise<string> {
+	const detectionModel = getDetectionModel(model);
+
 	const response = await fetch(`${baseURL}/chat/completions`, {
 		method: "POST",
 		headers: {
@@ -233,7 +256,7 @@ async function detectPatches(
 			Authorization: `Bearer ${apiKey}`,
 		},
 		body: JSON.stringify({
-			model,
+			model: detectionModel,
 			messages: [{ role: "user", content: prompt }],
 			temperature: 0,
 			max_tokens: 500,
@@ -241,6 +264,11 @@ async function detectPatches(
 	});
 
 	if (!response.ok) {
+		const errorText = await response.text().catch(() => "");
+		console.warn(
+			`[Context Patches] Detection API error: ${response.status}`,
+			errorText.slice(0, 200)
+		);
 		throw new Error(`Detection API error: ${response.status}`);
 	}
 
