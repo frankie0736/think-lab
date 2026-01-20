@@ -187,19 +187,81 @@ export function buildInjectionContent(
 }
 
 /**
- * 记录匹配日志
+ * 记录匹配日志（仅在有匹配时输出）
  */
 export function logPatchMatch(
-	userMessage: string,
+	_userMessage: string,
 	matches: PatchMatchResult[]
 ): void {
-	const timestamp = new Date().toISOString();
-	const matchInfo =
-		matches.length > 0
-			? matches.map((m) => `${m.patchId}(${m.topic})`).join(", ")
-			: "none";
+	if (matches.length === 0) {
+		return;
+	}
+	const matchInfo = matches.map((m) => m.patchId).join(", ");
+	console.log(`[Patches] +${matchInfo}`);
+}
 
-	console.log(
-		`[Context Patches] ${timestamp} | Matches: ${matchInfo} | Message: ${userMessage.slice(0, 100)}${userMessage.length > 100 ? "..." : ""}`
-	);
+/**
+ * 获取项目根目录的 patches 路径
+ */
+export function getPatchesDir(): string {
+	return path.join(process.cwd(), "patches", "context");
+}
+
+/**
+ * 获取用于检测的模型名称
+ * 检测任务简单，使用轻量模型；同时避免 thinking 模型的特殊要求
+ */
+export function getDetectionModel(mainModel: string): string {
+	// 如果是 thinking 模型，去掉 -think 后缀
+	if (mainModel.includes("-think")) {
+		return mainModel.replace("-think", "");
+	}
+	// 如果是 Claude 模型，使用 haiku 做检测（更快更便宜）
+	if (mainModel.includes("claude")) {
+		return "claude-haiku-4-5-20251001";
+	}
+	// 如果是 GPT 模型，使用 gpt-4o-mini 做检测
+	if (mainModel.includes("gpt")) {
+		return "gpt-4.1-mini";
+	}
+	// 其他情况使用原模型
+	return mainModel;
+}
+
+/**
+ * 调用 LLM 进行 patch 检测（非流式）
+ */
+export async function detectPatches(
+	prompt: string,
+	apiKey: string,
+	baseURL: string,
+	model: string
+): Promise<string> {
+	const detectionModel = getDetectionModel(model);
+
+	const response = await fetch(`${baseURL}/chat/completions`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify({
+			model: detectionModel,
+			messages: [{ role: "user", content: prompt }],
+			temperature: 0,
+			max_tokens: 500,
+		}),
+	});
+
+	if (!response.ok) {
+		const errorText = await response.text().catch(() => "");
+		console.warn(
+			`[Context Patches] Detection API error: ${response.status}`,
+			errorText.slice(0, 200)
+		);
+		throw new Error(`Detection API error: ${response.status}`);
+	}
+
+	const data = await response.json();
+	return data.choices?.[0]?.message?.content || "[]";
 }

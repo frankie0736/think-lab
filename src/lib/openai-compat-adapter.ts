@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import type {
 	ContentPart,
 	DefaultMessageMetadataByModality,
@@ -81,7 +82,10 @@ export class OpenAICompatTextAdapter extends BaseTextAdapter<
 			>();
 			let responseId = "";
 
+			// Debug: collect all chunks to jsonl file
+			const debugChunks: string[] = [];
 			for await (const chunk of stream) {
+				debugChunks.push(JSON.stringify(chunk));
 				responseId = chunk.id;
 				const choice = chunk.choices[0];
 
@@ -89,9 +93,13 @@ export class OpenAICompatTextAdapter extends BaseTextAdapter<
 
 				const delta = choice.delta;
 
-				// Handle reasoning/thinking content (DeepSeek R1, etc.)
+				// Handle reasoning/thinking content (DeepSeek R1, OpenAI o1, Claude thinking, etc.)
 				// biome-ignore lint/suspicious/noExplicitAny: Some providers use non-standard field
-				const reasoningContent = (delta as any).reasoning_content;
+				const deltaAny = delta as any;
+				const reasoningContent =
+					deltaAny.reasoning_content ||
+					deltaAny.thinking ||
+					deltaAny.thinking_content;
 				if (reasoningContent) {
 					accumulatedReasoning += reasoningContent;
 					yield {
@@ -178,9 +186,19 @@ export class OpenAICompatTextAdapter extends BaseTextAdapter<
 					};
 				}
 			}
+			// Debug: write all chunks to jsonl file
+			if (debugChunks.length > 0) {
+				fs.writeFileSync("stream-debug.jsonl", debugChunks.join("\n"));
+				console.log(
+					`[Stream] wrote ${debugChunks.length} chunks to stream-debug.jsonl`
+				);
+			}
 		} catch (error) {
 			const err = error as Error;
-			console.error(">>> OpenAI Compat chatStream error:", err.message);
+			// Don't log abort errors (user cancelled)
+			if (err.name !== "AbortError" && !err.message.includes("aborted")) {
+				console.error("[Stream] error:", err.message);
+			}
 			yield {
 				type: "error",
 				id: this.generateId(),

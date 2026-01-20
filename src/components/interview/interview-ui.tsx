@@ -283,8 +283,15 @@ export function InterviewUI({
 		initialAnswers ?? {}
 	);
 
-	const currentQuestion = input.questions[currentStep];
-	const isLastQuestion = currentStep === input.questions.length - 1;
+	// Defensive check: ensure questions is an array
+	const questions = Array.isArray(input.questions) ? input.questions : [];
+	const currentQuestion = questions[currentStep];
+	const isLastQuestion = currentStep === questions.length - 1;
+
+	// Early return if no valid questions
+	if (!currentQuestion || questions.length === 0) {
+		return null;
+	}
 
 	const handleAnswer = (answer: string | string[]) => {
 		const newAnswers = {
@@ -304,7 +311,7 @@ export function InterviewUI({
 
 	const handleGoBack = (stepIndex: number) => {
 		// Clear answers from stepIndex onwards (they may depend on earlier answers)
-		const questionsToKeep = input.questions.slice(0, stepIndex);
+		const questionsToKeep = questions.slice(0, stepIndex);
 		const newAnswers: Record<string, string | string[]> = {};
 		for (const q of questionsToKeep) {
 			if (answers[q.question]) {
@@ -333,7 +340,7 @@ export function InterviewUI({
 			<AnsweredQuestions
 				answers={answers}
 				onGoBack={handleGoBack}
-				questions={input.questions.slice(0, currentStep)}
+				questions={questions.slice(0, currentStep)}
 			/>
 
 			<StepQuestion
@@ -342,7 +349,7 @@ export function InterviewUI({
 				onAnswer={handleAnswer}
 				question={currentQuestion}
 				questionIndex={currentStep}
-				totalQuestions={input.questions.length}
+				totalQuestions={questions.length}
 			/>
 		</div>
 	);
