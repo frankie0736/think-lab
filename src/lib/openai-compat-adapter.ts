@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import type {
-	ContentPart,
 	DefaultMessageMetadataByModality,
 	StreamChunk,
 	TextOptions,
@@ -12,11 +11,19 @@ import {
 } from "@tanstack/ai/adapters";
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
-
-interface OpenAICompatConfig {
-	apiKey: string;
-	baseURL?: string;
-}
+import type { AdapterConfig } from "./adapter-types";
+import { createErrorChunk, logAdapterError } from "./adapter-utils";
+import {
+	buildContentChunk,
+	buildDoneChunk,
+	buildThinkingChunk,
+	buildToolCallChunk,
+} from "./adapters/base/chunk-builders";
+import {
+	ContentAccumulator,
+	ToolCallAccumulator,
+} from "./adapters/base/stream-processor";
+import { extractContent } from "./message-utils";
 
 /**
  * OpenAI-compatible adapter using Chat Completions API
@@ -31,7 +38,7 @@ export class OpenAICompatTextAdapter extends BaseTextAdapter<
 	readonly name = "openai-compat" as const;
 	private client: OpenAI;
 
-	constructor(config: OpenAICompatConfig, model: string) {
+	constructor(config: AdapterConfig, model: string) {
 		super({}, model);
 		this.client = new OpenAI({
 			apiKey: config.apiKey,
@@ -74,13 +81,12 @@ export class OpenAICompatTextAdapter extends BaseTextAdapter<
 				}
 			);
 
-			let accumulatedContent = "";
-			let accumulatedReasoning = "";
-			const toolCallAccumulators = new Map<
-				number,
-				{ id: string; name: string; arguments: string }
-			>();
+			// Use shared accumulators (SSOT for stream state management)
+			const content = new ContentAccumulator();
+			const toolCalls = new ToolCallAccumulator();
 			let responseId = "";
+
+			const ctx = () => ({ id: responseId, model: options.model, timestamp });
 
 			// Debug: collect all chunks to jsonl file
 			const debugChunks: string[] = [];
@@ -89,7 +95,9 @@ export class OpenAICompatTextAdapter extends BaseTextAdapter<
 				responseId = chunk.id;
 				const choice = chunk.choices[0];
 
-				if (!choice) continue;
+				if (!choice) {
+					continue;
+				}
 
 				const delta = choice.delta;
 
@@ -101,89 +109,44 @@ export class OpenAICompatTextAdapter extends BaseTextAdapter<
 					deltaAny.thinking ||
 					deltaAny.thinking_content;
 				if (reasoningContent) {
-					accumulatedReasoning += reasoningContent;
-					yield {
-						type: "thinking",
-						id: responseId,
-						model: options.model,
-						timestamp,
+					const accumulated = content.appendThinking(reasoningContent);
+					yield buildThinkingChunk(ctx(), accumulated, {
 						delta: reasoningContent,
-						content: accumulatedReasoning,
-					};
+					});
 				}
 
 				// Handle regular content
 				if (delta.content) {
-					accumulatedContent += delta.content;
-					yield {
-						type: "content",
-						id: responseId,
-						model: options.model,
-						timestamp,
-						delta: delta.content,
-						content: accumulatedContent,
-						role: "assistant",
-					};
+					const accumulated = content.appendContent(delta.content);
+					yield buildContentChunk(ctx(), delta.content, accumulated);
 				}
 
 				// Handle tool calls
 				if (delta.tool_calls) {
 					for (const toolCallDelta of delta.tool_calls) {
-						const index = toolCallDelta.index;
-
-						if (!toolCallAccumulators.has(index)) {
-							toolCallAccumulators.set(index, {
-								id: toolCallDelta.id || "",
-								name: toolCallDelta.function?.name || "",
-								arguments: "",
-							});
-						}
-
-						const acc = toolCallAccumulators.get(index);
-						if (acc) {
-							if (toolCallDelta.id) acc.id = toolCallDelta.id;
-							if (toolCallDelta.function?.name)
-								acc.name = toolCallDelta.function.name;
-							if (toolCallDelta.function?.arguments)
-								acc.arguments += toolCallDelta.function.arguments;
-						}
+						toolCalls.update(toolCallDelta.index, {
+							id: toolCallDelta.id,
+							name: toolCallDelta.function?.name,
+							arguments: toolCallDelta.function?.arguments,
+						});
 					}
 				}
 
 				// Handle finish reason
 				if (choice.finish_reason) {
 					// Emit completed tool calls
-					for (const [index, toolCall] of toolCallAccumulators) {
-						yield {
-							type: "tool_call",
-							id: responseId,
-							model: options.model,
-							timestamp,
-							index,
-							toolCall: {
-								id: toolCall.id,
-								type: "function",
-								function: {
-									name: toolCall.name,
-									arguments: toolCall.arguments,
-								},
-							},
-						};
+					for (const [index, toolCall] of toolCalls.getAll()) {
+						yield buildToolCallChunk(ctx(), index, toolCall);
 					}
 
-					yield {
-						type: "done",
-						id: responseId,
-						model: options.model,
-						timestamp,
-						usage: {
+					yield buildDoneChunk(
+						ctx(),
+						{
 							promptTokens: chunk.usage?.prompt_tokens || 0,
 							completionTokens: chunk.usage?.completion_tokens || 0,
-							totalTokens: chunk.usage?.total_tokens || 0,
 						},
-						finishReason:
-							choice.finish_reason === "tool_calls" ? "tool_calls" : "stop",
-					};
+						choice.finish_reason === "tool_calls" ? "tool_calls" : "stop"
+					);
 				}
 			}
 			// Debug: write all chunks to jsonl file
@@ -194,20 +157,13 @@ export class OpenAICompatTextAdapter extends BaseTextAdapter<
 				);
 			}
 		} catch (error) {
-			const err = error as Error;
-			// Don't log abort errors (user cancelled)
-			if (err.name !== "AbortError" && !err.message.includes("aborted")) {
-				console.error("[Stream] error:", err.message);
-			}
-			yield {
-				type: "error",
-				id: this.generateId(),
-				model: options.model,
-				timestamp,
-				error: {
-					message: err.message,
-				},
-			};
+			logAdapterError("OpenAI", error);
+			yield createErrorChunk(
+				error,
+				this.generateId(),
+				options.model,
+				timestamp
+			);
 		}
 	}
 
@@ -261,13 +217,13 @@ export class OpenAICompatTextAdapter extends BaseTextAdapter<
 			if (msg.role === "user") {
 				messages.push({
 					role: "user",
-					content: this.extractContent(msg.content),
+					content: extractContent(msg.content),
 				});
 			} else if (msg.role === "assistant") {
 				if (msg.toolCalls?.length) {
 					messages.push({
 						role: "assistant",
-						content: this.extractContent(msg.content) || null,
+						content: extractContent(msg.content) || null,
 						tool_calls: msg.toolCalls.map((tc) => ({
 							id: tc.id,
 							type: "function" as const,
@@ -283,7 +239,7 @@ export class OpenAICompatTextAdapter extends BaseTextAdapter<
 				} else {
 					messages.push({
 						role: "assistant",
-						content: this.extractContent(msg.content),
+						content: extractContent(msg.content),
 					});
 				}
 			} else if (msg.role === "tool") {
@@ -299,17 +255,6 @@ export class OpenAICompatTextAdapter extends BaseTextAdapter<
 		}
 
 		return messages;
-	}
-
-	private extractContent(
-		content: string | null | ContentPart[] | undefined
-	): string {
-		if (!content) return "";
-		if (typeof content === "string") return content;
-		return content
-			.filter((p) => p.type === "text")
-			.map((p) => p.content)
-			.join("");
 	}
 }
 

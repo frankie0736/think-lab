@@ -4,7 +4,7 @@ import {
 	useChat,
 } from "@tanstack/ai-react";
 import { createFileRoute } from "@tanstack/react-router";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 import {
 	ChatInput,
@@ -13,70 +13,37 @@ import {
 	type StreamPhase,
 } from "@/components/chat";
 import { useEditableChat } from "@/hooks/use-editable-chat";
-import { getSettingsFromStorage } from "@/hooks/use-settings";
-import type { ThinkingHistoryItem } from "@/lib/anthropic-compat-adapter";
-import type { InterviewOutput } from "@/lib/interview-tool";
+import { getNonEmptySettings } from "@/hooks/use-settings";
+import type { ThinkingStreamChunk } from "@/lib/adapter-types";
+import {
+	INTERVIEW_TOOL_NAME,
+	type InterviewOutput,
+} from "@/lib/interview-tool";
+import { thinkingHistoryStore } from "@/lib/thinking-history";
 
 type UIState = "initial" | "interviewing" | "followup";
-
-/**
- * Extended chunk type that may include signature from Anthropic adapter
- */
-interface ThinkingChunkWithSignature {
-	type: "thinking";
-	id: string;
-	content: string;
-	signature?: string;
-	isComplete?: boolean;
-}
 
 function ThinkingAssistant() {
 	const [streamPhase, setStreamPhase] = useState<StreamPhase>("idle");
 
-	// Store thinking history for multi-turn conversations with Claude thinking models
-	const thinkingHistoryRef = useRef<Record<string, ThinkingHistoryItem>>({});
-	const currentThinkingRef = useRef<{ id: string; content: string } | null>(
-		null
-	);
-
 	const chatOptions = createChatClientOptions({
 		connection: fetchServerSentEvents("/api/chat", () => {
-			const settings = getSettingsFromStorage();
-			// Only include non-empty settings
-			const filteredSettings = Object.fromEntries(
-				Object.entries(settings).filter(([_, v]) => v)
-			);
+			const settings = getNonEmptySettings();
 			return {
 				body: {
-					...(Object.keys(filteredSettings).length > 0
-						? { settings: filteredSettings }
-						: {}),
-					// Include thinking history for Claude multi-turn thinking
-					...(Object.keys(thinkingHistoryRef.current).length > 0
-						? { thinkingHistory: thinkingHistoryRef.current }
+					...(Object.keys(settings).length > 0 ? { settings } : {}),
+					...(thinkingHistoryStore.hasHistory()
+						? { thinkingHistory: thinkingHistoryStore.getAll() }
 						: {}),
 				},
 			};
 		}),
 		onChunk: (chunk) => {
 			switch (chunk.type) {
-				case "thinking": {
+				case "thinking":
 					setStreamPhase("thinking");
-					// Track current thinking content
-					const thinkingChunk = chunk as ThinkingChunkWithSignature;
-					currentThinkingRef.current = {
-						id: thinkingChunk.id,
-						content: thinkingChunk.content,
-					};
-					// Save signature when thinking is complete
-					if (thinkingChunk.isComplete && thinkingChunk.signature) {
-						thinkingHistoryRef.current[thinkingChunk.id] = {
-							thinking: thinkingChunk.content,
-							signature: thinkingChunk.signature,
-						};
-					}
+					thinkingHistoryStore.processChunk(chunk as ThinkingStreamChunk);
 					break;
-				}
 				case "tool_call":
 					setStreamPhase("tool-streaming");
 					break;
@@ -84,13 +51,11 @@ function ThinkingAssistant() {
 				case "done":
 					setStreamPhase("complete");
 					break;
-				default:
-					break;
 			}
 		},
 		onFinish: () => {
 			setStreamPhase("idle");
-			currentThinkingRef.current = null;
+			thinkingHistoryStore.clearCurrentThinking();
 		},
 	});
 
@@ -124,7 +89,7 @@ function ThinkingAssistant() {
 		const hasActiveInterview = lastAssistantMsg.parts.some(
 			(p) =>
 				p.type === "tool-call" &&
-				p.name === "interview" &&
+				p.name === INTERVIEW_TOOL_NAME &&
 				p.state === "input-complete" &&
 				!p.output
 		);
@@ -141,7 +106,7 @@ function ThinkingAssistant() {
 		toolCallId: string,
 		output: InterviewOutput
 	) => {
-		addToolResult({ toolCallId, tool: "interview", output });
+		addToolResult({ toolCallId, tool: INTERVIEW_TOOL_NAME, output });
 	};
 
 	const handleResubmit = (toolCallId: string, output: InterviewOutput) => {

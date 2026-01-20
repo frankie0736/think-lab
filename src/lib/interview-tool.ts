@@ -2,6 +2,11 @@ import { toolDefinition } from "@tanstack/ai";
 import { z } from "zod";
 
 /**
+ * Tool name constant (SSOT - single source of truth for tool identification)
+ */
+export const INTERVIEW_TOOL_NAME = "interview" as const;
+
+/**
  * Option schema for interview questions
  */
 const optionSchema = z.object({
@@ -48,7 +53,7 @@ export const interviewOutputSchema = z.object({
  * - Trade-offs require user choice
  */
 export const interviewToolDef = toolDefinition({
-	name: "interview",
+	name: INTERVIEW_TOOL_NAME,
 	description: `向用户展示结构化选择界面来澄清模糊需求。
 
 【重要】必须提供 questions 数组参数，格式如下：

@@ -2,6 +2,8 @@ import { Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { useCustomInput } from "@/hooks/use-custom-input";
+import { useMultiSelect } from "@/hooks/use-multi-select";
 import type {
 	InterviewInput,
 	InterviewOutput,
@@ -73,7 +75,7 @@ function StepQuestion({
 	onAnswer,
 }: StepQuestionProps) {
 	// Initialize selected from initialAnswer
-	const getInitialSelected = () => {
+	const getInitialSelected = (): string[] => {
 		if (!initialAnswer) {
 			return [];
 		}
@@ -83,17 +85,15 @@ function StepQuestion({
 		return [initialAnswer];
 	};
 
-	const [selected, setSelected] = useState<string[]>(getInitialSelected);
-	const [customInput, setCustomInput] = useState("");
-	const [showCustom, setShowCustom] = useState(false);
+	// Use extracted hooks (SSOT for multi-select and custom input logic)
+	const { selected, isSelected, toggle, add } = useMultiSelect({
+		initialSelected: getInitialSelected(),
+	});
+	const customInput = useCustomInput();
 
 	const handleOptionClick = (label: string) => {
 		if (question.multiSelect) {
-			setSelected((prev) =>
-				prev.includes(label)
-					? prev.filter((v) => v !== label)
-					: [...prev, label]
-			);
+			toggle(label);
 		} else {
 			// Single select: immediately advance
 			onAnswer(label);
@@ -107,20 +107,16 @@ function StepQuestion({
 	};
 
 	const handleCustomSubmit = () => {
-		if (!customInput.trim()) {
+		const value = customInput.submit();
+		if (!value) {
 			return;
 		}
 		if (question.multiSelect) {
-			const newSelected = [...selected, customInput.trim()];
-			setSelected(newSelected);
-			setCustomInput("");
-			setShowCustom(false);
+			add(value);
 		} else {
-			onAnswer(customInput.trim());
+			onAnswer(value);
 		}
 	};
-
-	const isSelected = (label: string) => selected.includes(label);
 
 	const getStepColor = (i: number) => {
 		if (i <= questionIndex) {
@@ -212,12 +208,12 @@ function StepQuestion({
 				))}
 
 				{/* Custom input */}
-				{showCustom ? (
+				{customInput.isOpen ? (
 					<div className="fade-in slide-in-from-top-2 flex animate-in gap-2 duration-200">
 						<input
 							autoFocus
 							className="flex-1 rounded-xl border border-input bg-background px-4 py-3 text-sm placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-							onChange={(e) => setCustomInput(e.target.value)}
+							onChange={(e) => customInput.setValue(e.target.value)}
 							onKeyDown={(e) => {
 								if (e.key === "Enter") {
 									e.preventDefault();
@@ -226,23 +222,19 @@ function StepQuestion({
 							}}
 							placeholder="Type your own answer..."
 							type="text"
-							value={customInput}
+							value={customInput.value}
 						/>
 						<Button onClick={handleCustomSubmit} size="sm">
 							Confirm
 						</Button>
-						<Button
-							onClick={() => setShowCustom(false)}
-							size="sm"
-							variant="ghost"
-						>
+						<Button onClick={customInput.close} size="sm" variant="ghost">
 							Cancel
 						</Button>
 					</div>
 				) : (
 					<button
 						className="w-full rounded-xl border border-border border-dashed p-4 text-muted-foreground text-sm transition-colors hover:border-primary/50 hover:bg-muted/30 hover:text-foreground"
-						onClick={() => setShowCustom(true)}
+						onClick={customInput.open}
 						type="button"
 					>
 						+ Add custom answer

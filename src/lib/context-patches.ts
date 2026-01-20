@@ -54,7 +54,7 @@ export function loadPatches(patchesDir: string): ContextPatch[] {
 	const patches: ContextPatch[] = [];
 
 	if (!fs.existsSync(patchesDir)) {
-		console.warn(`[Context Patches] Directory not found: ${patchesDir}`);
+		console.warn(`[ContextPatches] Directory not found: ${patchesDir}`);
 		return patches;
 	}
 
@@ -73,10 +73,10 @@ export function loadPatches(patchesDir: string): ContextPatch[] {
 			if (patch) {
 				patches.push(patch);
 			} else {
-				console.warn(`[Context Patches] Failed to parse: ${file}`);
+				console.warn(`[ContextPatches] Failed to parse: ${file}`);
 			}
 		} catch (error) {
-			console.warn(`[Context Patches] Error reading ${file}:`, error);
+			console.warn(`[ContextPatches] Error reading ${file}:`, error);
 		}
 	}
 
@@ -145,7 +145,7 @@ export function parseDetectionResponse(response: string): PatchMatchResult[] {
 				typeof item.topic === "string"
 		);
 	} catch {
-		console.warn("[Context Patches] Failed to parse detection response");
+		console.warn("[ContextPatches] Failed to parse detection response");
 		return [];
 	}
 }
@@ -197,7 +197,7 @@ export function logPatchMatch(
 		return;
 	}
 	const matchInfo = matches.map((m) => m.patchId).join(", ");
-	console.log(`[Patches] +${matchInfo}`);
+	console.log(`[ContextPatches] +${matchInfo}`);
 }
 
 /**
@@ -256,7 +256,7 @@ export async function detectPatches(
 	if (!response.ok) {
 		const errorText = await response.text().catch(() => "");
 		console.warn(
-			`[Context Patches] Detection API error: ${response.status}`,
+			`[ContextPatches] Detection API error: ${response.status}`,
 			errorText.slice(0, 200)
 		);
 		throw new Error(`Detection API error: ${response.status}`);

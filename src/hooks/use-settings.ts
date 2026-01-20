@@ -71,3 +71,14 @@ export function useSettings() {
 export function getSettingsFromStorage(): UserSettings {
 	return getStoredSettings();
 }
+
+/**
+ * Get settings with empty values filtered out (SSOT for non-empty settings).
+ * Use this when sending settings to API - avoids filtering logic in consumers.
+ */
+export function getNonEmptySettings(): Partial<UserSettings> {
+	const settings = getStoredSettings();
+	return Object.fromEntries(
+		Object.entries(settings).filter(([_, v]) => v)
+	) as Partial<UserSettings>;
+}

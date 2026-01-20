@@ -1,86 +1,35 @@
 import type {
-	ContentPart,
 	DefaultMessageMetadataByModality,
 	StreamChunk,
 	TextOptions,
 } from "@tanstack/ai";
 import { BaseTextAdapter } from "@tanstack/ai/adapters";
+import type {
+	AdapterConfig,
+	AnthropicContentBlockMessage,
+	AnthropicMessage,
+	AnthropicStreamEvent,
+	ThinkingHistoryItem,
+	ThinkingStreamChunk,
+} from "./adapter-types";
+import { createErrorChunk, logAdapterError } from "./adapter-utils";
+import {
+	buildContentChunk,
+	buildDoneChunk,
+	buildThinkingChunk,
+	buildToolCallChunk,
+} from "./adapters/base/chunk-builders";
+import {
+	ContentAccumulator,
+	ToolCallAccumulator,
+} from "./adapters/base/stream-processor";
+import { extractContent } from "./message-utils";
 
-interface AnthropicCompatConfig {
-	apiKey: string;
-	baseURL?: string;
-}
-
-interface AnthropicMessage {
-	role: "user" | "assistant";
-	content: string | AnthropicContentBlock[];
-}
-
-interface AnthropicContentBlock {
-	type: "text" | "thinking" | "tool_use" | "tool_result" | "redacted_thinking";
-	text?: string;
-	thinking?: string;
-	signature?: string;
-	data?: string;
-	id?: string;
-	name?: string;
-	input?: unknown;
-	tool_use_id?: string;
-	content?: string;
-}
-
-interface AnthropicStreamEvent {
-	type: string;
-	index?: number;
-	content_block?: {
-		type: string;
-		thinking?: string;
-		signature?: string;
-		text?: string;
-		id?: string;
-		name?: string;
-	};
-	delta?: {
-		type: string;
-		text?: string;
-		thinking?: string;
-		signature?: string;
-		partial_json?: string;
-	};
-	message?: {
-		id: string;
-		usage?: {
-			input_tokens: number;
-			output_tokens: number;
-		};
-	};
-	usage?: {
-		input_tokens: number;
-		output_tokens: number;
-	};
-}
-
-/**
- * Thinking history item for multi-turn conversations
- */
-export interface ThinkingHistoryItem {
-	thinking: string;
-	signature: string;
-}
-
-/**
- * Extended thinking chunk with signature
- */
-export interface ThinkingStreamChunkWithSignature {
-	type: "thinking";
-	id: string;
-	model: string;
-	timestamp: number;
-	delta?: string;
-	content: string;
-	signature?: string;
-	isComplete?: boolean;
-}
+// Re-export types for backward compatibility (SSOT: types defined in adapter-types.ts)
+export type {
+	ThinkingHistoryItem,
+	ThinkingStreamChunk as ThinkingStreamChunkWithSignature,
+};
 
 /**
  * Anthropic-compatible adapter using Messages API (non-beta)
@@ -93,16 +42,16 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 	DefaultMessageMetadataByModality
 > {
 	readonly name = "anthropic-compat" as const;
-	protected readonly adapterConfig: AnthropicCompatConfig;
+	protected readonly adapterConfig: AdapterConfig;
 
-	constructor(config: AnthropicCompatConfig, model: string) {
+	constructor(config: AdapterConfig, model: string) {
 		super({}, model);
 		this.adapterConfig = config;
 	}
 
 	async *chatStream(
 		options: TextOptions<Record<string, unknown>>
-	): AsyncIterable<StreamChunk | ThinkingStreamChunkWithSignature> {
+	): AsyncIterable<StreamChunk | ThinkingStreamChunk> {
 		const timestamp = Date.now();
 		const baseURL = this.adapterConfig.baseURL || "https://api.anthropic.com";
 		const url = `${baseURL}/v1/messages`;
@@ -184,17 +133,13 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 			yield* this.processStream(response.body, options.model, timestamp);
 			console.log("[Anthropic] stream complete");
 		} catch (error) {
-			const err = error as Error;
-			if (err.name !== "AbortError" && !err.message.includes("aborted")) {
-				console.error("[Anthropic] error:", err.message);
-			}
-			yield {
-				type: "error",
-				id: this.generateId(),
-				model: options.model,
-				timestamp,
-				error: { message: err.message },
-			};
+			logAdapterError("Anthropic", error);
+			yield createErrorChunk(
+				error,
+				this.generateId(),
+				options.model,
+				timestamp
+			);
 		}
 	}
 
@@ -202,20 +147,19 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 		body: ReadableStream<Uint8Array>,
 		model: string,
 		timestamp: number
-	): AsyncIterable<StreamChunk | ThinkingStreamChunkWithSignature> {
+	): AsyncIterable<StreamChunk | ThinkingStreamChunk> {
 		const reader = body.getReader();
 		const decoder = new TextDecoder();
 		let buffer = "";
 		let responseId = "";
-		let accumulatedContent = "";
-		let accumulatedThinking = "";
-		let currentSignature = "";
-		const toolCalls = new Map<
-			number,
-			{ id: string; name: string; arguments: string }
-		>();
+
+		// Use shared accumulators (SSOT for stream state management)
+		const content = new ContentAccumulator();
+		const toolCalls = new ToolCallAccumulator();
 		let currentBlockIndex = -1;
 		let currentBlockType = "";
+
+		const ctx = () => ({ id: responseId, model, timestamp });
 
 		try {
 			while (true) {
@@ -245,114 +189,58 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 						continue;
 					}
 
-					// Handle different event types
-					if (event.type === "message_start" && event.message) {
+					// Handle different event types using discriminated union
+					if (event.type === "message_start") {
 						responseId = event.message.id;
-					} else if (
-						event.type === "content_block_start" &&
-						event.content_block
-					) {
-						currentBlockIndex = event.index ?? -1;
+					} else if (event.type === "content_block_start") {
+						currentBlockIndex = event.index;
 						currentBlockType = event.content_block.type;
 
 						if (event.content_block.type === "thinking") {
-							// Reset for new thinking block
-							accumulatedThinking = "";
-							currentSignature = "";
+							content.resetThinking();
 						} else if (event.content_block.type === "tool_use") {
-							toolCalls.set(currentBlockIndex, {
-								id: event.content_block.id || "",
-								name: event.content_block.name || "",
-								arguments: "",
+							toolCalls.update(currentBlockIndex, {
+								id: event.content_block.id,
+								name: event.content_block.name,
 							});
 						}
-					} else if (event.type === "content_block_delta" && event.delta) {
-						if (event.delta.type === "thinking_delta" && event.delta.thinking) {
-							accumulatedThinking += event.delta.thinking;
-							yield {
-								type: "thinking",
-								id: responseId,
-								model,
-								timestamp,
+					} else if (event.type === "content_block_delta") {
+						if (event.delta.type === "thinking_delta") {
+							const accumulated = content.appendThinking(event.delta.thinking);
+							yield buildThinkingChunk(ctx(), accumulated, {
 								delta: event.delta.thinking,
-								content: accumulatedThinking,
-							};
-						} else if (
-							event.delta.type === "signature_delta" &&
-							event.delta.signature
-						) {
-							// Capture signature
-							currentSignature = event.delta.signature;
-						} else if (event.delta.type === "text_delta" && event.delta.text) {
-							accumulatedContent += event.delta.text;
-							yield {
-								type: "content",
-								id: responseId,
-								model,
-								timestamp,
-								delta: event.delta.text,
-								content: accumulatedContent,
-								role: "assistant",
-							};
-						} else if (
-							event.delta.type === "input_json_delta" &&
-							event.delta.partial_json
-						) {
-							const toolCall = toolCalls.get(currentBlockIndex);
-							if (toolCall) {
-								toolCall.arguments += event.delta.partial_json;
-							}
+							});
+						} else if (event.delta.type === "signature_delta") {
+							content.setSignature(event.delta.signature);
+						} else if (event.delta.type === "text_delta") {
+							const accumulated = content.appendContent(event.delta.text);
+							yield buildContentChunk(ctx(), event.delta.text, accumulated);
+						} else if (event.delta.type === "input_json_delta") {
+							toolCalls.update(currentBlockIndex, {
+								arguments: event.delta.partial_json,
+							});
 						}
 					} else if (event.type === "content_block_stop") {
-						// Emit completion events
-						if (currentBlockType === "thinking" && currentSignature) {
-							// Emit final thinking chunk with signature
-							yield {
-								type: "thinking",
-								id: responseId,
-								model,
-								timestamp,
-								content: accumulatedThinking,
-								signature: currentSignature,
+						if (currentBlockType === "thinking" && content.getSignature()) {
+							yield buildThinkingChunk(ctx(), content.getThinking(), {
+								signature: content.getSignature(),
 								isComplete: true,
-							};
+							});
 						} else if (currentBlockType === "tool_use") {
 							const toolCall = toolCalls.get(currentBlockIndex);
 							if (toolCall) {
-								yield {
-									type: "tool_call",
-									id: responseId,
-									model,
-									timestamp,
-									index: currentBlockIndex,
-									toolCall: {
-										id: toolCall.id,
-										type: "function",
-										function: {
-											name: toolCall.name,
-											arguments: toolCall.arguments,
-										},
-									},
-								};
+								yield buildToolCallChunk(ctx(), currentBlockIndex, toolCall);
 							}
 						}
-					} else if (event.type === "message_delta") {
-						// Message complete
 					} else if (event.type === "message_stop") {
-						yield {
-							type: "done",
-							id: responseId,
-							model,
-							timestamp,
-							usage: {
+						yield buildDoneChunk(
+							ctx(),
+							{
 								promptTokens: event.usage?.input_tokens || 0,
 								completionTokens: event.usage?.output_tokens || 0,
-								totalTokens:
-									(event.usage?.input_tokens || 0) +
-									(event.usage?.output_tokens || 0),
 							},
-							finishReason: toolCalls.size > 0 ? "tool_calls" : "stop",
-						};
+							toolCalls.hasToolCalls() ? "tool_calls" : "stop"
+						);
 					}
 				}
 			}
@@ -377,7 +265,7 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 			if (msg.role === "user") {
 				messages.push({
 					role: "user",
-					content: this.extractContent(msg.content),
+					content: extractContent(msg.content),
 				});
 			} else if (msg.role === "assistant") {
 				// Match thinking by order of assistant messages
@@ -385,7 +273,7 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 				thinkingIndex++;
 
 				if (msg.toolCalls?.length) {
-					const content: AnthropicContentBlock[] = [];
+					const content: AnthropicContentBlockMessage[] = [];
 					// For thinking models, include thinking block with signature if available
 					// If no thinking was returned (e.g., tool-only responses), skip the thinking block
 					if (isThinkingModel && thinkingItem) {
@@ -398,7 +286,7 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 					if (msg.content) {
 						content.push({
 							type: "text",
-							text: this.extractContent(msg.content),
+							text: extractContent(msg.content),
 						});
 					}
 					for (const tc of msg.toolCalls) {
@@ -427,7 +315,7 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 								},
 								{
 									type: "text",
-									text: this.extractContent(msg.content),
+									text: extractContent(msg.content),
 								},
 							],
 						});
@@ -435,13 +323,13 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 						// No thinking available, send as plain text
 						messages.push({
 							role: "assistant",
-							content: this.extractContent(msg.content),
+							content: extractContent(msg.content),
 						});
 					}
 				}
 			} else if (msg.role === "tool") {
 				// Tool results need to be attached to user message in Anthropic format
-				const toolResult: AnthropicContentBlock = {
+				const toolResult: AnthropicContentBlockMessage = {
 					type: "tool_result",
 					tool_use_id: msg.toolCallId || "",
 					content:
@@ -452,7 +340,7 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 				// Find last user message or create new one
 				const lastMsg = messages[messages.length - 1];
 				if (lastMsg?.role === "user" && Array.isArray(lastMsg.content)) {
-					(lastMsg.content as AnthropicContentBlock[]).push(toolResult);
+					(lastMsg.content as AnthropicContentBlockMessage[]).push(toolResult);
 				} else {
 					messages.push({ role: "user", content: [toolResult] });
 				}
@@ -460,21 +348,6 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 		}
 
 		return messages;
-	}
-
-	private extractContent(
-		content: string | null | ContentPart[] | undefined
-	): string {
-		if (!content) {
-			return "";
-		}
-		if (typeof content === "string") {
-			return content;
-		}
-		return content
-			.filter((p) => p.type === "text")
-			.map((p) => p.content)
-			.join("");
 	}
 
 	async structuredOutput(): Promise<never> {

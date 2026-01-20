@@ -1,5 +1,9 @@
 import { EditableInterview, InterviewUI } from "@/components/interview";
-import type { InterviewInput, InterviewOutput } from "@/lib/interview-tool";
+import {
+	INTERVIEW_TOOL_NAME,
+	type InterviewInput,
+	type InterviewOutput,
+} from "@/lib/interview-tool";
 
 import { InterviewSkeleton } from "./interview-skeleton";
 import { TextMessage } from "./text-message";
@@ -20,7 +24,7 @@ export function renderMessagePart(
 		return <TextMessage content={part.content} key={partKey} role={role} />;
 	}
 
-	if (part.type === "tool-call" && part.name === "interview") {
+	if (part.type === "tool-call" && part.name === INTERVIEW_TOOL_NAME) {
 		let input: InterviewInput | null = null;
 		try {
 			input = part.arguments ? JSON.parse(part.arguments) : null;
