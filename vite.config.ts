@@ -6,6 +6,9 @@ import { defineConfig } from "vite";
 import viteTsConfigPaths from "vite-tsconfig-paths";
 
 const config = defineConfig({
+	server: {
+		allowedHosts: ["f6ca0ecad094.ngrok-free.app"],
+	},
 	plugins: [
 		devtools(),
 		// this is the plugin that enables path aliases
