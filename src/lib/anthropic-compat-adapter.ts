@@ -29,7 +29,7 @@ import { extractContent } from "./message-utils";
 export type {
 	ThinkingHistoryItem,
 	ThinkingStreamChunk as ThinkingStreamChunkWithSignature,
-};
+} from "./adapter-types";
 
 /**
  * Anthropic-compatible adapter using Messages API (non-beta)
@@ -143,6 +143,7 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 		}
 	}
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: stream processing requires handling many event types
 	private async *processStream(
 		body: ReadableStream<Uint8Array>,
 		model: string,
@@ -249,6 +250,7 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 		}
 	}
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: message conversion has inherent complexity
 	private convertMessages(
 		options: TextOptions<Record<string, unknown>>,
 		thinkingHistory?: Record<string, ThinkingHistoryItem>
@@ -301,31 +303,28 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 						});
 					}
 					messages.push({ role: "assistant", content });
+				} else if (isThinkingModel && thinkingItem) {
+					// For thinking models without tool calls, include thinking block
+					messages.push({
+						role: "assistant",
+						content: [
+							{
+								type: "thinking",
+								thinking: thinkingItem.thinking,
+								signature: thinkingItem.signature,
+							},
+							{
+								type: "text",
+								text: extractContent(msg.content),
+							},
+						],
+					});
 				} else {
-					// For thinking models without tool calls
-					if (isThinkingModel && thinkingItem) {
-						// Include thinking block if available
-						messages.push({
-							role: "assistant",
-							content: [
-								{
-									type: "thinking",
-									thinking: thinkingItem.thinking,
-									signature: thinkingItem.signature,
-								},
-								{
-									type: "text",
-									text: extractContent(msg.content),
-								},
-							],
-						});
-					} else {
-						// No thinking available, send as plain text
-						messages.push({
-							role: "assistant",
-							content: extractContent(msg.content),
-						});
-					}
+					// No thinking available, send as plain text
+					messages.push({
+						role: "assistant",
+						content: extractContent(msg.content),
+					});
 				}
 			} else if (msg.role === "tool") {
 				// Tool results need to be attached to user message in Anthropic format
@@ -338,7 +337,7 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 							: JSON.stringify(msg.content),
 				};
 				// Find last user message or create new one
-				const lastMsg = messages[messages.length - 1];
+				const lastMsg = messages.at(-1);
 				if (lastMsg?.role === "user" && Array.isArray(lastMsg.content)) {
 					(lastMsg.content as AnthropicContentBlockMessage[]).push(toolResult);
 				} else {
@@ -350,9 +349,9 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 		return messages;
 	}
 
-	async structuredOutput(): Promise<never> {
-		throw new Error(
-			"structuredOutput not implemented for Anthropic compat adapter"
+	structuredOutput(): Promise<never> {
+		return Promise.reject(
+			new Error("structuredOutput not implemented for Anthropic compat adapter")
 		);
 	}
 }

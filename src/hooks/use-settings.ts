@@ -15,7 +15,9 @@ const defaultSettings: UserSettings = {
 };
 
 function getStoredSettings(): UserSettings {
-	if (typeof window === "undefined") return defaultSettings;
+	if (typeof window === "undefined") {
+		return defaultSettings;
+	}
 	try {
 		const stored = localStorage.getItem(STORAGE_KEY);
 		if (stored) {

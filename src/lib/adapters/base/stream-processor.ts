@@ -45,7 +45,9 @@ export async function* readSSEStream(
 				try {
 					const parsed = JSON.parse(data);
 					yield { type: parsed.type || "unknown", data: parsed };
-				} catch {}
+				} catch {
+					// Skip malformed JSON lines silently
+				}
 			}
 		}
 	} finally {
@@ -58,7 +60,7 @@ export async function* readSSEStream(
  * Manages the state of in-progress tool calls during streaming.
  */
 export class ToolCallAccumulator {
-	private calls = new Map<
+	private readonly calls = new Map<
 		number,
 		{ id: string; name: string; arguments: string }
 	>();
@@ -70,10 +72,11 @@ export class ToolCallAccumulator {
 		index: number,
 		partial: { id?: string; name?: string; arguments?: string }
 	): void {
-		if (!this.calls.has(index)) {
-			this.calls.set(index, { id: "", name: "", arguments: "" });
+		let call = this.calls.get(index);
+		if (!call) {
+			call = { id: "", name: "", arguments: "" };
+			this.calls.set(index, call);
 		}
-		const call = this.calls.get(index)!;
 		if (partial.id) {
 			call.id = partial.id;
 		}

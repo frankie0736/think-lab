@@ -1,3 +1,4 @@
+// biome-ignore lint/performance/noBarrelFile: intentional re-exports for cleaner imports
 export { ChatInput } from "./chat-input";
 export { InterviewSkeleton } from "./interview-skeleton";
 export { renderMessagePart } from "./message-part";

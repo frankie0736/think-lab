@@ -22,6 +22,7 @@ const V1_SUFFIX_REGEX = /\/v1\/?$/;
 export const Route = createFileRoute("/api/chat")({
 	server: {
 		handlers: {
+			// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: API handler has multiple code paths for different providers
 			POST: async ({ request }) => {
 				if (request.signal.aborted) {
 					return new Response(null, { status: 499 });

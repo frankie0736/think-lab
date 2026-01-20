@@ -36,7 +36,7 @@ export class OpenAICompatTextAdapter extends BaseTextAdapter<
 	DefaultMessageMetadataByModality
 > {
 	readonly name = "openai-compat" as const;
-	private client: OpenAI;
+	private readonly client: OpenAI;
 
 	constructor(config: AdapterConfig, model: string) {
 		super({}, model);
@@ -46,6 +46,7 @@ export class OpenAICompatTextAdapter extends BaseTextAdapter<
 		});
 	}
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: stream processing requires handling many response scenarios
 	async *chatStream(
 		options: TextOptions<Record<string, unknown>>
 	): AsyncIterable<StreamChunk> {

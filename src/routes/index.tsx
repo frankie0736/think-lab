@@ -51,6 +51,9 @@ function ThinkingAssistant() {
 				case "done":
 					setStreamPhase("complete");
 					break;
+				default:
+					// Ignore other chunk types
+					break;
 			}
 		},
 		onFinish: () => {
