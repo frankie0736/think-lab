@@ -1,8 +1,15 @@
+import * as path from "node:path";
 import { chat, maxIterations, toServerSentEventsResponse } from "@tanstack/ai";
 import { createOpenaiChat } from "@tanstack/ai-openai";
 import { createFileRoute } from "@tanstack/react-router";
-
 import { env } from "@/env";
+import {
+	buildDetectionPrompt,
+	buildInjectionContent,
+	loadPatches,
+	logPatchMatch,
+	parseDetectionResponse,
+} from "@/lib/context-patches";
 import { interviewToolDef } from "@/lib/interview-tool";
 import { createOpenAICompatChat } from "@/lib/openai-compat-adapter";
 
@@ -210,6 +217,45 @@ const SYSTEM_PROMPT = `思考辅助助手。5 阶段流程帮用户想清楚一�
 [关键假设 + 止损条件]
 `;
 
+/**
+ * 调用 LLM 进行 patch 检测（非流式）
+ */
+async function detectPatches(
+	prompt: string,
+	apiKey: string,
+	baseURL: string,
+	model: string
+): Promise<string> {
+	const response = await fetch(`${baseURL}/chat/completions`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${apiKey}`,
+		},
+		body: JSON.stringify({
+			model,
+			messages: [{ role: "user", content: prompt }],
+			temperature: 0,
+			max_tokens: 500,
+		}),
+	});
+
+	if (!response.ok) {
+		throw new Error(`Detection API error: ${response.status}`);
+	}
+
+	const data = await response.json();
+	return data.choices?.[0]?.message?.content || "[]";
+}
+
+/**
+ * 获取项目根目录的 patches 路径
+ */
+function getPatchesDir(): string {
+	// 在开发环境中，process.cwd() 是项目根目录
+	return path.join(process.cwd(), "patches", "context");
+}
+
 export const Route = createFileRoute("/api/chat")({
 	server: {
 		handlers: {
@@ -253,6 +299,48 @@ export const Route = createFileRoute("/api/chat")({
 						);
 					}
 
+					// Context Patches: 检测并注入领域特定 prompt
+					let systemPrompt = SYSTEM_PROMPT;
+					try {
+						const patches = loadPatches(getPatchesDir());
+						if (patches.length > 0) {
+							// 提取最后一条用户消息用于检测
+							const lastUserMessage = [...messages]
+								.reverse()
+								.find((m) => m.role === "user");
+							const userContent =
+								typeof lastUserMessage?.content === "string"
+									? lastUserMessage.content
+									: "";
+
+							if (userContent) {
+								const detectionPrompt = buildDetectionPrompt(
+									patches,
+									userContent
+								);
+								const detectionResponse = await detectPatches(
+									detectionPrompt,
+									apiKey,
+									baseURL,
+									model
+								);
+								const matches = parseDetectionResponse(detectionResponse);
+
+								// 记录匹配日志
+								logPatchMatch(userContent, matches);
+
+								// 注入匹配的 patch 内容
+								const injection = buildInjectionContent(patches, matches);
+								if (injection) {
+									systemPrompt = SYSTEM_PROMPT + injection;
+								}
+							}
+						}
+					} catch (error) {
+						console.warn("[Context Patches] Detection failed:", error);
+						// 检测失败不影响主流程
+					}
+
 					// Use OpenAI-compat adapter (Chat Completions API) for providers that don't support Responses API
 					// Set USE_COMPLETIONS_API=true in .env.local to enable this
 					const adapter = useCompletionsAPI
@@ -263,7 +351,7 @@ export const Route = createFileRoute("/api/chat")({
 					const stream = chat({
 						adapter,
 						tools: [interviewToolDef],
-						systemPrompts: [SYSTEM_PROMPT],
+						systemPrompts: [systemPrompt],
 						agentLoopStrategy: maxIterations(20),
 						messages,
 						abortController,
