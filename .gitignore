@@ -1,19 +1,46 @@
-node_modules
-.DS_Store
-dist
-dist-ssr
-*.local
-count.txt
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dist-ssr/
+.output/
+.nitro/
+.vinxi/
+
+# Environment files (IMPORTANT: Never commit API keys!)
 .env
-.nitro
-.tanstack
-.wrangler
-.output
-.vinxi
+.env.local
+.env.*.local
+*.local
+
+# IDE & OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# TanStack
+.tanstack/
+
+# Cloudflare
+.wrangler/
+
+# Project-specific
+count.txt
 todos.json
-.claude/hooks/.inject-state.json
-.docs/
 sqlite.db
+*.db
+
+# Development files
 msg-archives/
 sessions/
+.docs/
+
+# Claude Code
+.claude/hooks/.inject-state.json
+
+# Miscs
+.claude/
 scripts/

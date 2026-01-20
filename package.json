@@ -1,6 +1,21 @@
 {
-  "name": "issue-lab",
-  "private": true,
+  "name": "thinklab",
+  "version": "0.1.0",
+  "description": "AI 驱动的结构化思考辅助工具，通过 5 阶段对话流程帮助你从模糊想法到清晰决策",
+  "author": "yansir",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yansir/thinklab.git"
+  },
+  "keywords": [
+    "ai",
+    "thinking",
+    "decision-making",
+    "claude",
+    "openai",
+    "tanstack"
+  ],
   "type": "module",
   "scripts": {
     "dev": "vite dev --port 3000",
@@ -17,8 +32,7 @@
     "db:push": "drizzle-kit push",
     "db:pull": "drizzle-kit pull",
     "db:studio": "drizzle-kit studio",
-    "prepare": "husky",
-    "postinstall": "./scripts/check-compiler.sh"
+    "prepare": "husky"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.8",
