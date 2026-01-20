@@ -4,6 +4,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { env } from "@/env";
 import { interviewToolDef } from "@/lib/interview-tool";
+import { createOpenAICompatChat } from "@/lib/openai-compat-adapter";
 
 const SYSTEM_PROMPT = `思考辅助助手。5 阶段流程帮用户想清楚一件事。
 
@@ -220,13 +221,30 @@ export const Route = createFileRoute("/api/chat")({
 				const abortController = new AbortController();
 
 				try {
-					const { messages } = await request.json();
+					const body = await request.json();
+					const { messages, settings } = body as {
+						// biome-ignore lint/suspicious/noExplicitAny: Messages type from client
+						messages: any[];
+						settings?: { baseURL?: string; apiKey?: string; model?: string };
+					};
 
-					const model = env.OPENAI_MODEL || "gpt-4.1";
-					const apiKey = env.OPENAI_API_KEY || "";
-					const baseURL = env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+					// User settings override server defaults
+					const model = settings?.model || env.OPENAI_MODEL || "gpt-4.1";
+					const apiKey = settings?.apiKey || env.OPENAI_API_KEY || "";
+					const baseURL =
+						settings?.baseURL ||
+						env.OPENAI_BASE_URL ||
+						"https://api.openai.com/v1";
+					const useCompletionsAPI = env.USE_COMPLETIONS_API === "true";
 
-					console.log("[Chat API] model:", model, "baseURL:", baseURL);
+					console.log(
+						"[Chat API] model:",
+						model,
+						"baseURL:",
+						baseURL,
+						"useCompletionsAPI:",
+						useCompletionsAPI
+					);
 
 					if (!apiKey) {
 						return new Response(
@@ -235,9 +253,15 @@ export const Route = createFileRoute("/api/chat")({
 						);
 					}
 
+					// Use OpenAI-compat adapter (Chat Completions API) for providers that don't support Responses API
+					// Set USE_COMPLETIONS_API=true in .env.local to enable this
+					const adapter = useCompletionsAPI
+						? createOpenAICompatChat(model, apiKey, { baseURL })
+						: // @ts-expect-error - custom model from env
+							createOpenaiChat(model, apiKey, { baseURL });
+
 					const stream = chat({
-						// @ts-expect-error - custom model from env
-						adapter: createOpenaiChat(model, apiKey, { baseURL }),
+						adapter,
 						tools: [interviewToolDef],
 						systemPrompts: [SYSTEM_PROMPT],
 						agentLoopStrategy: maxIterations(20),

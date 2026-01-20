@@ -2,8 +2,10 @@ import type { QueryClient } from "@tanstack/react-query";
 import {
 	createRootRouteWithContext,
 	HeadContent,
+	Outlet,
 	Scripts,
 } from "@tanstack/react-router";
+import { Header } from "@/components/layout/header";
 import appCss from "../styles.css?url";
 
 interface MyRouterContext {
@@ -32,11 +34,21 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 		],
 	}),
 
+	component: RootLayout,
 	shellComponent: RootDocument,
 	notFoundComponent: () => <div>Not Found</div>,
 	pendingComponent: () => <div>Loading...</div>,
 	errorComponent: ({ error }) => <div>{error.message}</div>,
 });
+
+function RootLayout() {
+	return (
+		<div className="flex h-[100dvh] flex-col bg-background text-foreground">
+			<Header />
+			<Outlet />
+		</div>
+	);
+}
 
 function RootDocument({ children }: { children: React.ReactNode }) {
 	return (
