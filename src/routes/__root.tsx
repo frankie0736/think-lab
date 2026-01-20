@@ -23,7 +23,7 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 				content: "width=device-width, initial-scale=1",
 			},
 			{
-				title: "思考辅助",
+				title: "ACF 产品规划",
 			},
 		],
 		links: [

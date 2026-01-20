@@ -109,6 +109,8 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 
 		try {
 			console.log("[Anthropic] sending request...");
+			console.log("[Anthropic] messages:", JSON.stringify(messages, null, 2));
+			console.log("[Anthropic] tools:", JSON.stringify(body.tools, null, 2));
 			const response = await fetch(url, {
 				method: "POST",
 				headers: {
@@ -193,9 +195,16 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 					// Handle different event types using discriminated union
 					if (event.type === "message_start") {
 						responseId = event.message.id;
+						console.log("[Anthropic] message_start, id:", responseId);
 					} else if (event.type === "content_block_start") {
 						currentBlockIndex = event.index;
 						currentBlockType = event.content_block.type;
+						console.log(
+							"[Anthropic] content_block_start:",
+							currentBlockType,
+							"index:",
+							currentBlockIndex
+						);
 
 						if (event.content_block.type === "thinking") {
 							content.resetThinking();
@@ -212,6 +221,10 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 								delta: event.delta.thinking,
 							});
 						} else if (event.delta.type === "signature_delta") {
+							console.log(
+								"[Anthropic] signature_delta received, length:",
+								event.delta.signature.length
+							);
 							content.setSignature(event.delta.signature);
 						} else if (event.delta.type === "text_delta") {
 							const accumulated = content.appendContent(event.delta.text);
@@ -222,6 +235,12 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 							});
 						}
 					} else if (event.type === "content_block_stop") {
+						console.log(
+							"[Anthropic] content_block_stop:",
+							currentBlockType,
+							"hasSignature:",
+							!!content.getSignature()
+						);
 						if (currentBlockType === "thinking" && content.getSignature()) {
 							yield buildThinkingChunk(ctx(), content.getThinking(), {
 								signature: content.getSignature(),
@@ -262,6 +281,16 @@ export class AnthropicCompatTextAdapter extends BaseTextAdapter<
 		// Since messages don't have stable IDs, match by assistant message order
 		const thinkingItems = thinkingHistory ? Object.values(thinkingHistory) : [];
 		let thinkingIndex = 0;
+
+		console.log(
+			"[Anthropic] thinkingHistory keys:",
+			thinkingHistory ? Object.keys(thinkingHistory) : "none"
+		);
+		console.log("[Anthropic] thinkingItems count:", thinkingItems.length);
+		console.log(
+			"[Anthropic] assistant messages count:",
+			options.messages.filter((m) => m.role === "assistant").length
+		);
 
 		for (const msg of options.messages) {
 			if (msg.role === "user") {

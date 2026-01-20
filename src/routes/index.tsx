@@ -129,13 +129,16 @@ function ThinkingAssistant() {
 				<div className="w-full space-y-6 text-center">
 					<div className="space-y-2">
 						<h1 className="font-semibold text-2xl text-foreground tracking-tight">
-							想清楚一件事
+							产品数据结构规划
 						</h1>
 						<p className="text-muted-foreground text-sm">
-							输入一个模糊的想法，AI 会通过提问帮你理清思路
+							告诉我你卖什么产品，AI 会帮你梳理网站的产品管理结构
 						</p>
 					</div>
-					<ChatInput onSend={sendMessage} placeholder="描述你想理清的问题..." />
+					<ChatInput
+						onSend={sendMessage}
+						placeholder="简单描述你的产品，比如：我卖不锈钢螺丝，有几百种规格..."
+					/>
 				</div>
 			</main>
 		);
@@ -152,7 +155,7 @@ function ThinkingAssistant() {
 			/>
 			{uiState === "followup" && (
 				<div className="safe-area-bottom border-border/50 border-t p-4">
-					<ChatInput onSend={sendMessage} placeholder="继续追问或换个方向..." />
+					<ChatInput onSend={sendMessage} placeholder="补充说明或提问..." />
 				</div>
 			)}
 		</main>
